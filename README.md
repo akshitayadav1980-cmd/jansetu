@@ -1,6 +1,11 @@
 # JANSETU: Where Communities Meet Innovation
 ### A Collaborative Ecosystem Connecting Communities, Universities, Government and Industry
 
+[![Live Demo](https://img.shields.io/badge/Demo-jansetu--woad.vercel.app-brightgreen?style=for-the-badge&logo=vercel)](https://jansetu-woad.vercel.app/)
+[![Vercel Deployment](https://img.shields.io/badge/Vercel-Deployed-black?style=for-the-badge&logo=vercel)](https://jansetu-woad.vercel.app/)
+
+> 🚀 **Live Demo:** [https://jansetu-woad.vercel.app/](https://jansetu-woad.vercel.app/)
+
 A digital platform to crowdsource societal challenges and facilitate collaborative problem-solving through universities and industry partnerships.
 
 ---
