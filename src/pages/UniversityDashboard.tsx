@@ -394,8 +394,9 @@ export const UniversityDashboard: React.FC = () => {
                 <input
                   type="number"
                   step={100000}
+                  min={0}
                   value={budgetINR}
-                  onChange={e => setBudgetINR(Number(e.target.value))}
+                  onChange={e => setBudgetINR(Math.max(0, Number(e.target.value)))}
                   className="w-full px-3.5 py-2.5 rounded-xl bg-navy-900 border border-white/10 text-white"
                   required
                 />

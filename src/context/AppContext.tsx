@@ -78,14 +78,73 @@ export const generateId = (prefix: 'CH' | 'PRJ' | 'CON' | 'TM' | 'M'): string =>
   return `${prefix}-2026-${timestamp}-${randomSuffix}`;
 };
 
-// Safe LocalStorage helpers with try/catch error handling
+// Type validation guards for hardened storage recovery
+function isValidChallenge(c: any): c is Challenge {
+  return (
+    c !== null &&
+    typeof c === 'object' &&
+    typeof c.id === 'string' &&
+    typeof c.title === 'string' &&
+    typeof c.domain === 'string' &&
+    typeof c.status === 'string' &&
+    typeof c.priority === 'string' &&
+    typeof c.description === 'string' &&
+    c.submittedBy !== null &&
+    typeof c.submittedBy === 'object' &&
+    c.aiAnalysis !== null &&
+    typeof c.aiAnalysis === 'object'
+  );
+}
+
+function isValidProject(p: any): p is Project {
+  return (
+    p !== null &&
+    typeof p === 'object' &&
+    typeof p.id === 'string' &&
+    typeof p.challengeId === 'string' &&
+    typeof p.title === 'string' &&
+    typeof p.status === 'string' &&
+    typeof p.progressPercent === 'number' &&
+    Array.isArray(p.milestones)
+  );
+}
+
+// Safe LocalStorage helpers with try/catch error handling and type verification
 function safeStorageGet<T>(key: string, fallback: T): T {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return fallback;
-    return JSON.parse(raw) as T;
+    const parsed = JSON.parse(raw);
+
+    // Hardened validation: if fallback is an array, reject non-array JSON
+    if (Array.isArray(fallback)) {
+      if (!Array.isArray(parsed)) {
+        console.warn(`[JanSetu Storage] Key "${key}" parsed to non-array value. Reverting to fallback.`);
+        return fallback;
+      }
+
+      if (key === 'jansetu_challenges_v1') {
+        const validChallenges = parsed.filter(isValidChallenge);
+        if (validChallenges.length === 0 && (fallback as any[]).length > 0) {
+          console.warn(`[JanSetu Storage] Stored challenges in "${key}" were corrupted. Reverting to fallback.`);
+          return fallback;
+        }
+        return validChallenges as unknown as T;
+      }
+
+      if (key === 'jansetu_projects_v1') {
+        const validProjects = parsed.filter(isValidProject);
+        if (validProjects.length === 0 && (fallback as any[]).length > 0) {
+          console.warn(`[JanSetu Storage] Stored projects in "${key}" were corrupted. Reverting to fallback.`);
+          return fallback;
+        }
+        return validProjects as unknown as T;
+      }
+    }
+
+    return parsed as T;
   } catch (err) {
-    console.warn(`[JanSetu Storage] Failed to load key "${key}" from LocalStorage. Using fallback.`, err);
+    console.warn(`[JanSetu Storage] Failed to load or parse key "${key}". Using fallback.`, err);
     return fallback;
   }
 }
@@ -159,8 +218,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   const [activePersona, setActivePersona] = useState<UserPersona>(() => {
-    const savedRole = localStorage.getItem('jansetu_active_role') as StakeholderRole;
-    return DEMO_PERSONAS[savedRole] || DEMO_PERSONAS.citizen;
+    try {
+      const savedRole = localStorage.getItem('jansetu_active_role') as StakeholderRole;
+      return (savedRole && DEMO_PERSONAS[savedRole]) ? DEMO_PERSONAS[savedRole] : DEMO_PERSONAS.citizen;
+    } catch {
+      return DEMO_PERSONAS.citizen;
+    }
   });
 
   const [toasts, setToasts] = useState<ToastNotification[]>([]);
@@ -194,7 +257,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           try {
             const parsed = JSON.parse(e.newValue);
             if (Array.isArray(parsed)) {
-              setChallenges(parsed);
+              const valid = parsed.filter(isValidChallenge);
+              if (valid.length > 0) {
+                setChallenges(valid);
+              }
             }
           } catch (err) {
             console.warn('[JanSetu Multi-Tab Sync] Failed to parse challenges from storage event', err);
@@ -207,15 +273,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           try {
             const parsed = JSON.parse(e.newValue);
             if (Array.isArray(parsed)) {
-              setProjects(parsed);
+              const valid = parsed.filter(isValidProject);
+              if (valid.length > 0) {
+                setProjects(valid);
+              }
             }
           } catch (err) {
             console.warn('[JanSetu Multi-Tab Sync] Failed to parse projects from storage event', err);
           }
         }
       } else if (e.key === 'jansetu_active_role') {
-        if (e.newValue && DEMO_PERSONAS[e.newValue as StakeholderRole]) {
-          setActivePersona(DEMO_PERSONAS[e.newValue as StakeholderRole]);
+        try {
+          if (e.newValue && DEMO_PERSONAS[e.newValue as StakeholderRole]) {
+            setActivePersona(DEMO_PERSONAS[e.newValue as StakeholderRole]);
+          }
+        } catch {
+          // Ignored
         }
       }
     };
@@ -329,14 +402,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     assignUniId?: string, 
     assignUniName?: string
   ) => {
+    const targetChallenge = challenges.find(c => c.id === challengeId);
+    if (!targetChallenge) {
+      showToast('Challenge Not Found', `Challenge ${challengeId} does not exist.`, 'error');
+      return;
+    }
+
+    // Enforce rule: only submitted challenges can transition to verified
+    if (targetChallenge.status !== 'submitted' && targetChallenge.status !== 'verified') {
+      showToast('Status Error', `Challenge is currently "${targetChallenge.status.replace('_', ' ')}" and cannot be verified.`, 'warning');
+      return;
+    }
+
+    const sanitizedGrant = Math.max(0, (typeof grantINR === 'number' && Number.isFinite(grantINR)) ? grantINR : 0);
+
     setChallenges(prev => prev.map(c => {
       if (c.id === challengeId) {
-        // Enforce rule: only submitted challenges can transition to verified
-        if (c.status !== 'submitted' && c.status !== 'verified') {
-          showToast('Status Error', `Challenge is currently ${c.status} and cannot be reverified.`, 'warning');
-          return c;
-        }
-
         const universityName = assignUniName || `${c.aiAnalysis.recommendedUniversities[0]?.name} — ${c.aiAnalysis.recommendedUniversities[0]?.department}`;
         const universityId = assignUniId || c.aiAnalysis.recommendedUniversities[0]?.name;
 
@@ -350,19 +431,36 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           governmentReview: {
             reviewedBy: activePersona.name,
             reviewedAt: new Date().toISOString(),
-            notes,
-            allocatedGrantINR: grantINR,
+            notes: notes.trim() || 'Verified by Nodal Authority.',
+            allocatedGrantINR: sanitizedGrant,
             officialPriority
           }
         };
       }
       return c;
     }));
-    showToast('Challenge Verified', `Challenge ${challengeId} verified at priority [${officialPriority.toUpperCase()}] with allocated grant ₹${(grantINR / 100000).toFixed(1)} Lakhs.`, 'success');
+
+    showToast('Challenge Verified', `Challenge ${challengeId} verified at priority [${officialPriority.toUpperCase()}] with allocated grant ₹${(sanitizedGrant / 100000).toFixed(1)} Lakhs.`, 'success');
   };
 
   // Government rejection: blocks from entering university workflow
   const rejectChallenge = (challengeId: string, notes: string) => {
+    const targetChallenge = challenges.find(c => c.id === challengeId);
+    if (!targetChallenge) {
+      showToast('Challenge Not Found', `Challenge ${challengeId} does not exist.`, 'error');
+      return;
+    }
+
+    if (targetChallenge.status === 'in_progress' || targetChallenge.status === 'completed') {
+      showToast('Action Blocked', `Cannot reject a challenge that is already adopted for R&D or completed.`, 'error');
+      return;
+    }
+
+    if (targetChallenge.status === 'rejected') {
+      showToast('Already Rejected', `Challenge ${challengeId} has already been marked as rejected.`, 'info');
+      return;
+    }
+
     setChallenges(prev => prev.map(c => {
       if (c.id === challengeId) {
         return {
@@ -371,13 +469,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           governmentReview: {
             reviewedBy: activePersona.name,
             reviewedAt: new Date().toISOString(),
-            notes,
-            rejectionReason: notes
+            notes: notes.trim() || 'Marked ineligible / rejected by nodal authority.',
+            rejectionReason: notes.trim() || 'Does not meet statutory criteria.'
           }
         };
       }
       return c;
     }));
+
     showToast('Challenge Rejected', `Challenge marked as rejected/ineligible. Recorded statutory justification.`, 'warning');
   };
 
@@ -414,7 +513,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const newProjectId = generateId('PRJ');
-    const inheritedGovtGrant = parentChallenge.governmentReview?.allocatedGrantINR || 500000;
+    // Task 2: Use nullish coalescing to preserve legitimate zero grant without fabricating ₹5L
+    const rawGrant = parentChallenge.governmentReview?.allocatedGrantINR;
+    const inheritedGovtGrant = (typeof rawGrant === 'number' && Number.isFinite(rawGrant) && rawGrant >= 0)
+      ? rawGrant
+      : 0;
+
+    const sanitizedBudget = Math.max(
+      0,
+      (typeof proposal.targetBudgetINR === 'number' && Number.isFinite(proposal.targetBudgetINR))
+        ? proposal.targetBudgetINR
+        : 2000000
+    );
     
     const newProject: Project = {
       id: newProjectId,
@@ -471,8 +581,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       contributions: [],
       allocatedGovtGrantINR: inheritedGovtGrant,
       totalIndustryFundingINR: 0,
-      fundingReceivedINR: inheritedGovtGrant, // Inherits government grant into initial funding
-      fundingTargetINR: proposal.targetBudgetINR || 2000000,
+      fundingReceivedINR: inheritedGovtGrant, // Inherits actual government grant into initial funding
+      fundingTargetINR: sanitizedBudget,
       impactMetrics: {
         livesImpactedEstimate: 5000,
         areaCoveredKm2: 10,
@@ -580,7 +690,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         linkedChallengeId = p.challengeId;
         const updatedMilestones = p.milestones.map(m => m.id === milestoneId ? { ...m, status } : m);
         const completedCount = updatedMilestones.filter(m => m.status === 'completed').length;
-        const progressPercent = Math.round((completedCount / updatedMilestones.length) * 100);
+        const progressPercent = updatedMilestones.length > 0
+          ? Math.round((completedCount / updatedMilestones.length) * 100)
+          : 0;
         isFullyDeployed = progressPercent === 100;
 
         return {
@@ -625,24 +737,52 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Append new milestone deliverable
   const addMilestone = (projectId: string, milestone: Omit<ProjectMilestone, 'id'>) => {
+    let linkedChallengeId: string | undefined;
+    let isFullyDeployed = false;
+
     setProjects(prev => prev.map(p => {
       if (p.id === projectId) {
+        linkedChallengeId = p.challengeId;
         const newM: ProjectMilestone = {
           ...milestone,
           id: generateId('M')
         };
         const updatedMilestones = [...p.milestones, newM];
         const completedCount = updatedMilestones.filter(m => m.status === 'completed').length;
-        const progressPercent = Math.round((completedCount / updatedMilestones.length) * 100);
+        // Guard against division by zero
+        const progressPercent = updatedMilestones.length > 0
+          ? Math.round((completedCount / updatedMilestones.length) * 100)
+          : 0;
+        isFullyDeployed = progressPercent === 100;
 
         return {
           ...p,
           milestones: updatedMilestones,
-          progressPercent
+          progressPercent,
+          // If the new milestone is pending/in_progress and project was deployed, revert status
+          status: isFullyDeployed
+            ? 'deployed'
+            : (progressPercent > 40 ? 'field_testing' : 'active')
         };
       }
       return p;
     }));
+
+    // Synchronize parent challenge status
+    if (linkedChallengeId) {
+      setChallenges(prev => prev.map(c => {
+        if (c.id === linkedChallengeId) {
+          if (isFullyDeployed) {
+            return { ...c, status: 'completed' };
+          } else if (c.status === 'completed') {
+            // New pending milestone added — project no longer fully deployed, revert challenge
+            return { ...c, status: 'in_progress' };
+          }
+        }
+        return c;
+      }));
+    }
+
     showToast('Milestone Added', 'New project deliverable milestone appended.', 'success');
   };
 

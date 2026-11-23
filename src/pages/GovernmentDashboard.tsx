@@ -422,8 +422,9 @@ export const GovernmentDashboard: React.FC = () => {
                   <input
                     type="number"
                     step={100000}
+                    min={0}
                     value={allocatedGrant}
-                    onChange={e => setAllocatedGrant(Number(e.target.value))}
+                    onChange={e => setAllocatedGrant(Math.max(0, Number(e.target.value)))}
                     className="w-full px-3 py-2 rounded-xl bg-navy-900 border border-white/10 text-xs text-white"
                   />
                   <span className="text-[10px] text-emerald-400 font-semibold">

@@ -82,8 +82,8 @@ function deterministicScore(seed: string, min = 89, max = 98): number {
     hash = (hash << 5) - hash + seed.charCodeAt(i);
     hash |= 0; // Convert to 32-bit integer
   }
-  const positive = Math.abs(hash);
-  return min + (positive % (max - min + 1));
+  const unsigned = hash >>> 0; // Unsigned 32-bit integer — avoids Math.abs(-2147483648) overflow
+  return min + (unsigned % (max - min + 1));
 }
 
 /**

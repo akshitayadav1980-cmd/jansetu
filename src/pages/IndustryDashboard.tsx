@@ -283,8 +283,9 @@ export const IndustryDashboard: React.FC = () => {
                   <input
                     type="number"
                     step={50000}
+                    min={0}
                     value={pledgeAmountINR}
-                    onChange={e => setPledgeAmountINR(Number(e.target.value))}
+                    onChange={e => setPledgeAmountINR(Math.max(0, Number(e.target.value)))}
                     className="w-full px-3.5 py-2.5 rounded-xl bg-navy-900 border border-white/10 text-white font-mono"
                     required
                   />
